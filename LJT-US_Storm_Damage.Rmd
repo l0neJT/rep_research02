@@ -1,0 +1,176 @@
+---
+title: "Damage Analysis of U.S. Storm Activity"
+author: "Logan J Travis"
+date: "21 June 2014"
+output: html_document
+---
+
+## Synopziz
+
+## Data Processing
+
+Data provided by NOAA for storm actity from 1950 through November 2011. Please see the 
+
+### Access Data
+
+```{r accessDat}
+# Store link to NOAA Storm Data
+link <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+
+# Download data and save to ./data if not present
+# Checks for timestamp downloading a new copy of the data if not present
+if(!file.exists("./data")) dir.create("./data")
+if(sum(file.exists(c("./data/StormData.csv.bz2", "./data/Timestamp.txt"))) < 2 ) {
+    download.file(link, destfile = "./data/StormData.csv.bz2", method = "curl")
+    write.table(date(), file = "./data/Timestamp.txt", col.names = F, row.names = F)
+    print("Storm Data downloaded succesfully")
+} else {
+    timestamp <- format(read.table("./data/Timestamp.txt"))
+    print(paste("Using Storm Data with timestamp", timestamp))
+}
+```
+
+### Read Data
+```{r readDat}
+# List column classes including NULL to skip data not used in analysis
+cols <- c("numeric",  # STATE
+          "character",  # BGN_DATE (will convert to Date)
+          "NULL",  # BGN_TIME
+          "NULL",  # BGN_TIME
+          "NULL",  # COUNTY
+          "NULL",  # COUNTYNAME
+          "factor",  # STATE
+          "character",  # EVTYPE (character class to simplify cleanup)
+          "NULL",  # BGN_RANGE
+          "NULL",  # BGN_AZI
+          "NULL",  # BGN_LOCATION
+          "NULL",  # END_DATE (too many blanks for useful analysis)
+          "NULL",  # END_TIME
+          "NULL",  # COUNTY_END
+          "NULL",  # COUNTYENDN
+          "NULL",  # END_RANGE
+          "NULL",  # END_AZI
+          "NULL",  # END_LOCATION
+          "NULL",  # LENGTH
+          "NULL",  # WIDTH
+          "NULL",  # F
+          "NULL",  # MAG
+          "numeric",  # FATALITIES
+          "numeric",  # INJURIES
+          "numeric",  # PROPDMG
+          "factor",  # PROPDMGEXP
+          "numeric",  # CROPDMG
+          "factor",  # CROPDMGEXP
+          "NULL",  # WFO
+          "NULL",  # STATEOFFICE
+          "NULL",  # ZONENAMES
+          "NULL",  # LATTITUDE
+          "NULL",  # LONGITUDE
+          "NULL",  # LATITUDE_E
+          "NULL",  # LONGITUDE_
+          "NULL",  # REMARKS
+          "numeric"  # REFNUM
+         )
+
+# Read Storm Data
+dat <- read.csv("./data/StormData.csv.bz2", colClasses = cols)
+
+# Print data summary
+print(str(dat))
+```
+
+### Clean Data
+1. Change STATE__ columne name to STATENUM
+```{r cleanDatSTATENUM}
+    colnames <- names(dat)
+    colnames[1] <- "STATENUM"
+    names(dat) <- colnames
+```
+2. Convert begin date from character to Date format
+    ```{r cleanDatDate}
+    dat <- transform(dat, BGN_DATE = as.Date(BGN_DATE, format = "%m/%d/%Y %T"))
+    ```
+3. Replace 'XX' state with NA
+    ```{r cleanDatState}
+        dat[dat$STATE == "XX", 3] <- NA
+    ```
+4. Clean event types (multiple steps)
+    ```{r cleanDatEVTYPE, cache = TRUE}
+    # Create data.frame of unique EVTYPE values
+    # Copies columns to enable replacement matching
+    evtypes <- summarize(dat, EVTYPE = count(EVTYPE))[[1]]
+    evtypes$clean <- evtypes$x
+    
+    # Convert to upper case
+    evtypes$clean <- toupper(evtypes$clean)
+    
+    # Remove leading space
+    evtypes$clean <- gsub("^ +", "", evtypes$clean)
+    
+    # Replace 'THUNDERSTORM' with 'TSTM'
+    evtypes$clean <- gsub("THUNDERSTORM", "TSTM", evtypes$clean)
+    
+    # Truncate 'TSTM WIND'
+    evtypes$clean[grepl("^TSTM WIND", evtypes$clean)] <- "TSTM WIND"
+    
+    # Truncate 'HAIL'
+    evtypes$clean[grepl("^HAIL", evtypes$clean)] <- "HAIL"
+    
+    # Truncate 'HEAVY SNOW'
+    evtypes$clean[grepl("^HEAVY SNOW", evtypes$clean)] <- "HEAVY SNOW"
+    
+    # Truncate 'LIGHTNING'
+    evtypes$clean[grepl("^LIGHTNING", evtypes$clean)] <- "LIGHTNING"
+    
+    # Simplify 'FLASH FLOOD' and 'FLOOD'
+    evtypes$clean <- gsub("FLASH FLOOD.*FLOOD", "FLASH FLOOD", evtypes$clean)
+    
+    # Simplify then truncate 'HEAVY RAIN' (includes 'HEAVY PRECIPITATION' and 'HEAVY SHOWERS')
+    evtypes$clean <- gsub("HEAVY (PRECIPITATION|SHOWERS)", "HEAVY RAIN", evtypes$clean)
+    evtypes$clean[grepl("^HEAVY RAIN", evtypes$clean)] <- "HEAVY RAIN"
+    
+    # Simplify then truncate 'HIGH WIND(S)' and 'STRONG WIND(S)'
+    evtypes$clean <- gsub("(HIGH|STRONG) WIND", "HIGH WIND", evtypes$clean)
+    evtypes$clean[grepl("^HIGH WIND", evtypes$clean)] <- "HIGH WIND"
+    
+    # Simplify 'TORNADO'
+    evtypes$clean[grepl("TORNADO", evtypes$clean)] <- "TORNADO"
+    
+    # Replace non-alphanumeric with . and remove duplicates
+    evtypes$clean <- gsub("[^0-9A-Z]", ".", evtypes$clean)
+    evtypes$clean <- gsub("\\.{2, }", ".", evtypes$clean)
+
+    # Replace orig event type with clean in data
+    cleanEVTYPE <- function(x, dat = evtypes) {
+        print(x)
+        dat[x == dat$x, 3]
+    }
+
+    ## Error from console
+    ## [1] "HIGH.WIND"
+    ## [1] "BLIZZARD"
+    ## [1] "HEAVY.SNOW"
+    ## >     ```
+    ## Error: attempt to use zero-length variable name
+    dat$EVTYPE <- sapply(dat$EVTYPE, cleanEVTYPE)
+    ```
+5. Multiply property and crop damage by 'EXP'
+```{r cleanDatDamag}
+# Create function to lookup 'EXP' multiple
+expMultiple <- function(exp) {
+    switch(tolower(exp), k = 1E+3, m = 1E+6, b = 1E+9, 1)
+}
+
+# Transform data UNTESTED
+dat$PROPDMGEXP <- sapply(dat$PROPDMGEXP, expMultiple)
+dat$CROPDMGEXP <- sapply(dat$CROPDMGEXP, expMultiple)
+dat <- transform(dat, PROPDMG = PROPDMG * PROPDMGEXP, CROPDMG = CROPDMG * CROPDMGEXP)
+```
+
+## Results
+
+### Single Storm Distributions
+
+### Analyze 3-Year Mean Distributions
+
+## Conclusion
