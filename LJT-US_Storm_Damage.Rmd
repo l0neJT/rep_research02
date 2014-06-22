@@ -32,6 +32,9 @@ if(sum(file.exists(c("./data/StormData.csv.bz2", "./data/Timestamp.txt"))) < 2 )
 
 ### Read Data
 ```{r readDat}
+# Load data.table package
+library(data.table)
+
 # List column classes including NULL to skip data not used in analysis
 cols <- c("numeric",  # STATE
           "character",  # BGN_DATE (will convert to Date)
@@ -72,29 +75,27 @@ cols <- c("numeric",  # STATE
           "numeric"  # REFNUM
          )
 
-# Read Storm Data
-dat <- read.csv("./data/StormData.csv.bz2", colClasses = cols)
+# Read Storm Data then convert to data.table to speed cleanup
+# Calls read.csv() because fread produced an unknown error
+dat <- data.table(read.csv("./data/StormData.csv.bz2", colClasses = cols))
 
 # Print data summary
 print(str(dat))
+
+# Clear variables
+rm(cols)
 ```
 
 ### Clean Data
 1. Change STATE__ columne name to STATENUM
 ```{r cleanDatSTATENUM}
-    colnames <- names(dat)
-    colnames[1] <- "STATENUM"
-    names(dat) <- colnames
+    setnames(dat, "STATE__", "STATENUM")
 ```
 2. Convert begin date from character to Date format
     ```{r cleanDatDate}
-    dat <- transform(dat, BGN_DATE = as.Date(BGN_DATE, format = "%m/%d/%Y %T"))
+    dat$BGN_DATE <- dat[, as.Date(BGN_DATE, format = "%m/%d/%Y %T")]
     ```
-3. Replace 'XX' state with NA
-    ```{r cleanDatState}
-        dat[dat$STATE == "XX", 3] <- NA
-    ```
-4. Clean event types (multiple steps)
+3. Clean event types (multiple steps)
     ```{r cleanDatEVTYPE, cache = TRUE}
     # Create data.frame of unique EVTYPE values
     # Copies columns to enable replacement matching
@@ -140,33 +141,25 @@ print(str(dat))
     evtypes$clean <- gsub("[^0-9A-Z]", ".", evtypes$clean)
     evtypes$clean <- gsub("\\.{2, }", ".", evtypes$clean)
 
-    # Replace orig event type with clean in data
-    cleanEVTYPE <- function(x, dat = evtypes) {
-        print(x)
-        dat[x == dat$x, 3]
-    }
-
-    ## Error from console
-    ## [1] "HIGH.WIND"
-    ## [1] "BLIZZARD"
-    ## [1] "HEAVY.SNOW"
-    ## >     ```
-    ## Error: attempt to use zero-length variable name
-    dat$EVTYPE <- sapply(dat$EVTYPE, cleanEVTYPE)
+    # Merge clean event types into data
+    evtypesMerge <- data.table(EVTYPE = evtypes$x, EVTYPECLEAN = evtypes$clean)
+    dat <- merge(dat, evtypesMerge, by = "EVTYPE", all.x = TRUE)
     ```
-5. Multiply property and crop damage by 'EXP'
-```{r cleanDatDamag}
-# Create function to lookup 'EXP' multiple
-expMultiple <- function(exp) {
-    switch(tolower(exp), k = 1E+3, m = 1E+6, b = 1E+9, 1)
-}
-
-# Transform data UNTESTED
-dat$PROPDMGEXP <- sapply(dat$PROPDMGEXP, expMultiple)
-dat$CROPDMGEXP <- sapply(dat$CROPDMGEXP, expMultiple)
-dat <- transform(dat, PROPDMG = PROPDMG * PROPDMGEXP, CROPDMG = CROPDMG * CROPDMGEXP)
-```
-
+4. Multiply property and crop damage by 'EXP' to calculate total
+    ```{r cleanDatDamage}
+    # Create function to lookup 'EXP' multiple
+    expMultiple <- function(exp) {
+        switch(tolower(exp), k = 1E+3, m = 1E+6, b = 1E+9, 1)
+    }
+    
+    # Add total property and crop damage columns
+    dat[, PROPDMGTOT := {exp <- sapply(dat$PROPDMGEXP, expMultiple); PROPDMG * exp}]
+    dat[, CROPDMGTOT := {exp <- sapply(dat$CROPDMGEXP, expMultiple); CROPDMG * exp}]
+    ```
+5. Clear temporary variables
+    ```{r cleanDatClear}
+    rm(evtypes, evtypesMerge, expMultiple)
+    ```
 ## Results
 
 ### Single Storm Distributions
