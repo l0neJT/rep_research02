@@ -91,9 +91,10 @@ rm(cols)
 ```{r cleanDatSTATENUM}
     setnames(dat, "STATE__", "STATENUM")
 ```
-2. Convert begin date from character to Date format
+2. Convert begin date from character to Date format then add separate year column
     ```{r cleanDatDate}
     dat$BGN_DATE <- dat[, as.Date(BGN_DATE, format = "%m/%d/%Y %T")]
+    dat[, YEAR := year(BGN_DATE)]
     ```
 3. Clean event types (multiple steps)
     ```{r cleanDatEVTYPE, cache = TRUE}
@@ -155,6 +156,9 @@ rm(cols)
     # Add total property and crop damage columns
     dat[, PROPDMGTOT := {exp <- sapply(dat$PROPDMGEXP, expMultiple); PROPDMG * exp}]
     dat[, CROPDMGTOT := {exp <- sapply(dat$CROPDMGEXP, expMultiple); CROPDMG * exp}]
+
+    # Add total damage column
+    dat[, DMGTOT := PROPDMGTOT + CROPDMGTOT]
     ```
 5. Clear temporary variables
     ```{r cleanDatClear}
@@ -162,8 +166,60 @@ rm(cols)
     ```
 ## Results
 
-### Single Storm Distributions
+### Summary Statistics
+Summarize by year instead of individual events
+```{r sumStats}
+# Summarize data by year and type
+datSumYearType <- dat[, list(sum(FATALITIES), sum(INJURIES), sum(DMGTOT)),
+                      by = c("YEAR", "EVTYPECLEAN")]
+setnames(datSumYearType, c("YEAR", "EVTYPE", "FATALITIES", "INJURIES", "DMGTOT"))
+```
 
-### Analyze 3-Year Mean Distributions
+#### Annual Fatalities
+```{r sumStatsFtl}
+datStatsFtl <- datSumYearType[, as.list(summary(FATALITIES)), by = EVTYPE]
+datStatsFtl <- datStatsFtl[order(Mean, decreasing = TRUE)]
+```
+
+#### Injuries
+```{r sumStatsInj}
+datStatsInj <- datSumYearType[, as.list(summary(INJURIES)), by = EVTYPE]
+datStatsInj <- datStatsInj[order(Mean, decreasing = TRUE)]
+```
+
+#### Economic Damage
+```{r sumStatsDmg}
+datStatsDmg <- datSumYearType[, as.list(summary(DMGTOT)), by = EVTYPE]
+datStatsDmg <- datStatsDmg[order(Mean, decreasing = TRUE)]
+```
+
+### Annual Impact
+
+#### Health
+```{r healthImpact}
+datPlot <- datSumYearType[EVTYPE %in% datStatsFtl[1:5]$EVTYPE]
+datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"), measure = c("FATALITIES", "INJURIES"))
+
+qplot(factor(EVTYPE), log10(value), data = datPlot, geom = "boxplot", facets = . ~ variable)
+rm(datPlot)
+```
+
+#### Economic
+```{r econImpact}
+datPlot <- datSumYearType[EVTYPE %in% datStatsDmg[1:5]$EVTYPE]
+datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"), measure = "DMGTOT")
+
+qplot(factor(EVTYPE), log10(value), data = datPlot, geom = "boxplot", facets = . ~ variable)
+rm(datPlot)
+```
+
+### Single Event Economic Impact
+```{r singleEvent}
+datMaxType <- dat[, list(max(DMGTOT), (max(DMGTOT) - mean(DMGTOT)) / sd(DMGTOT)), "EVTYPECLEAN"]
+setnames(datMaxType, c("EVTYPE", "DMGTOT", "SD"))
+datMaxType <- datMaxType[order(DMGTOT, decreasing = TRUE)]
+
+qplot(DMGTOT, SD, data = datMaxType[1:10], color = EVTYPE)
+```
 
 ## Conclusion
