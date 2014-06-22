@@ -1,19 +1,31 @@
 ---
 title: "Damage Analysis of U.S. Storm Activity"
 author: "Logan J Travis"
-date: "21 June 2014"
+date: "22 June 2014"
 output: html_document
 ---
 
-## Synopziz
+## Synopsis
+
+Storm data collected by the U.S. National Oceanic and Atmospheric Administration's (NOAA) describes the damage to both human life and economic prosperity across the United States. Analyzing the data for the most impactful event types revealed extreme heat and flood as responsible for the largest average deaths per year. Floods similarly accounted for economic loss through property and crop damage. However, hurricanes and tornadoes also cost the U.S. significantly each year.
 
 ## Data Processing
+[Data](https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2) downloaded from U.S. National Oceanic and Atmospheric Administration's (NOAA) storm database covering 1950 through November 2011. Details for data collection and pre-processing available in the National Weather Service [Storm Data Documentation][storm_data_doc] and National Climatic Data Center Storm Events [FAQ](https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2FNCDC%20Storm%20Events-FAQ%20Page.pdf).
 
-Data provided by NOAA for storm actity from 1950 through November 2011. Please see the 
+[storm_data_doc]: https://d396qusza40orc.cloudfront.net/repdata%2Fpeer2_doc%2Fpd01016005curr.pdf
 
-### Access Data
+Cleanup required significant effort to condense nearly 1,000 different event types including misspelling, alternate names, and compound descriptions. The [Storm Data Documentation][storm_data_doc] includes descriptions for 48 'permitted' 48 storm events. Though not fully reduced to those prime events, cleanup cut the number of event types in half to 471.
 
-```{r accessDat}
+### Load Packages
+```{r loadPkg}
+library(data.table)
+library(ggplot2)
+library(plyr)
+library(reshape2)
+```
+
+## Access Data
+```{r accessDat, cache = TRUE}
 # Store link to NOAA Storm Data
 link <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
 
@@ -22,7 +34,8 @@ link <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz
 if(!file.exists("./data")) dir.create("./data")
 if(sum(file.exists(c("./data/StormData.csv.bz2", "./data/Timestamp.txt"))) < 2 ) {
     download.file(link, destfile = "./data/StormData.csv.bz2", method = "curl")
-    write.table(date(), file = "./data/Timestamp.txt", col.names = F, row.names = F)
+    write.table(date(), file = "./data/Timestamp.txt",
+                col.names = FALSE, row.names = FALSE)
     print("Storm Data downloaded succesfully")
 } else {
     timestamp <- format(read.table("./data/Timestamp.txt"))
@@ -31,10 +44,7 @@ if(sum(file.exists(c("./data/StormData.csv.bz2", "./data/Timestamp.txt"))) < 2 )
 ```
 
 ### Read Data
-```{r readDat}
-# Load data.table package
-library(data.table)
-
+```{r readDat, cache = TRUE}
 # List column classes including NULL to skip data not used in analysis
 cols <- c("numeric",  # STATE
           "character",  # BGN_DATE (will convert to Date)
@@ -87,50 +97,50 @@ rm(cols)
 ```
 
 ### Clean Data
-1. Change STATE__ columne name to STATENUM
-```{r cleanDatSTATENUM}
+1. Change STATE__ column name to STATENUM
+    ```{r cleanDatSTATENUM, cache = TRUE}
     setnames(dat, "STATE__", "STATENUM")
-```
+    ```
 2. Convert begin date from character to Date format then add separate year column
-    ```{r cleanDatDate}
+    ```{r cleanDatDate, cache = TRUE}
     dat$BGN_DATE <- dat[, as.Date(BGN_DATE, format = "%m/%d/%Y %T")]
-    dat[, YEAR := year(BGN_DATE)]
+    dat <- dat[, YEAR := year(BGN_DATE)]
     ```
 3. Clean event types (multiple steps)
     ```{r cleanDatEVTYPE, cache = TRUE}
-    # Load plyr package
-    library(plyr)
-
     # Count event types before clenup
-    print(length(unique(dat$EVTYPE)))
-
+    print(paste("Unique event types before cleanup:",
+                length(unique(dat$EVTYPE))))
+    
     # Create data.frame of unique EVTYPE values
-    # Copies columns to enable replacement matching
+    # Copies columns to enable replacement merge
     evtypes <- summarize(dat, EVTYPE = count(EVTYPE))[[1]]
     names(evtypes) <- c("EVTYPE", "COUNT")
     evtypes$CLEAN <- evtypes$EVTYPE
     
-    # EXPLAIN
-    evtypesPermit <- read.csv("./data/evtypes.csv", stringsAsFactors = FALSE)[[1]]
+    # Load permitted event types as described in the National Weather Service
+    # Storm Data Documentation. CSV saved by directly copying the report.
+    evtypesPermit <- read.csv("./data/evtypes.csv",
+                              stringsAsFactors = FALSE)[[1]]
     
     # Convert to upper case
     evtypes$CLEAN <- toupper(evtypes$CLEAN)
     evtypesPermit <- toupper(evtypesPermit)
-
+    
     # Replace non-alphanumeric with . and remove duplicates
     evtypes$CLEAN <- gsub("[^0-9A-Z]", ".", evtypes$CLEAN)
     evtypes$CLEAN <- gsub("\\.{2, }", ".", evtypes$CLEAN)
-    #
+    # For permitted events
     evtypesPermit <- gsub("[^0-9A-Z]", ".", evtypesPermit)
     evtypesPermit <- gsub("\\.{2, }", ".", evtypesPermit)
-
+    
     # Remove leading and ending .
     evtypes$CLEAN <- gsub("^\\.+", "", evtypes$CLEAN)
     evtypes$CLEAN <- gsub("\\.+$", "", evtypes$CLEAN)
-    #
+    # for permitted events
     evtypesPermit <- gsub("^\\.+", "", evtypesPermit)
     evtypesPermit <- gsub("\\.+$", "", evtypesPermit)
-
+    
     # Replace 'THUNDERSTORM' with 'TSTM'
     evtypes$CLEAN <- gsub("THUNDERSTORM", "TSTM", evtypes$CLEAN)
     evtypesPermit <- gsub("THUNDERSTORM", "TSTM", evtypesPermit)
@@ -139,15 +149,16 @@ rm(cols)
     evtypes$CLEAN <- gsub("FLASH FLOOD.*FLOOD", "FLASH FLOOD", evtypes$CLEAN)
     
     # Simplify 'HEAVY RAIN' (includes 'HEAVY PRECIPITATION' and 'HEAVY SHOWERS')
-    evtypes$CLEAN <- gsub("HEAVY (PRECIPITATION|SHOWERS)", "HEAVY RAIN", evtypes$CLEAN)
+    evtypes$CLEAN <- gsub("HEAVY (PRECIPITATION|SHOWERS)", "HEAVY RAIN",
+                          evtypes$CLEAN)
     
     # Simplify 'HIGH WIND(S)' and 'STRONG WIND(S)'
     evtypes$CLEAN <- gsub("(HIGH|STRONG) WIND", "HIGH WIND", evtypes$CLEAN)
-
+    
     # Simplify split 'HURRICANE.TYPHOON' in permitted event types
     evtypesPermit[grepl("^HURRICANE", evtypesPermit)] <- "HURRICANE"
     evtypesPermit <- c(evtypesPermit, "TYPHOON")    
-
+    
     # Order permitted event types by fewest number of characters
     evtypesPermit <- evtypesPermit[order(nchar(evtypesPermit))]
     
@@ -156,88 +167,104 @@ rm(cols)
         evtypes$CLEAN[grepl(ev, evtypes$CLEAN)] <- ev
     }
     rm(ev)
-
+    
     # Merge clean event types into data
-    evtypesMerge <- data.table(EVTYPE = evtypes$EVTYPE, EVTYPECLEAN = evtypes$CLEAN)
+    evtypesMerge <- data.table(EVTYPE = evtypes$EVTYPE,
+                               EVTYPECLEAN = evtypes$CLEAN)
     dat <- merge(dat, evtypesMerge, by = "EVTYPE", all.x = TRUE)
     
     # Count event types after clenup
-    print(length(unique(dat$EVTYPECLEAN)))
+    print(paste("Unique event types after cleanup:",
+                length(unique(dat$EVTYPECLEAN))))
     ```
 4. Multiply property and crop damage by 'EXP' to calculate total
-    ```{r cleanDatDamage}
+    ```{r cleanDatDmg, cache = TRUE}
     # Create function to lookup 'EXP' multiple
     expMultiple <- function(exp) {
         switch(tolower(exp), k = 1E+3, m = 1E+6, b = 1E+9, 1)
     }
     
     # Add total property and crop damage columns
-    dat[, PROPDMGTOT := {exp <- sapply(dat$PROPDMGEXP, expMultiple); PROPDMG * exp}]
-    dat[, CROPDMGTOT := {exp <- sapply(dat$CROPDMGEXP, expMultiple); CROPDMG * exp}]
-
+    dat <- dat[, PROPDMGTOT := {exp <- sapply(dat$PROPDMGEXP, expMultiple);
+                                PROPDMG * exp}]
+    dat <- dat[, CROPDMGTOT := {exp <- sapply(dat$CROPDMGEXP, expMultiple);
+                                CROPDMG * exp}]
+    
     # Add total damage column
-    dat[, DMGTOT := PROPDMGTOT + CROPDMGTOT]
+    dat <- dat[, DMGTOT := PROPDMGTOT + CROPDMGTOT]
     ```
-5. Clear temporary variables
-    ```{r cleanDatClear}
+5. Print clean data summary
+    ```{r cleanDatStr, cache = TRUE}
+    print(str(dat))
+    ```
+6. Clear temporary variables
+    ```{r cleanDatClear, cache = TRUE}
     rm(evtypes, evtypesPermit, evtypesMerge, expMultiple)
     ```
+
 ## Results
+Results summarized annually to account for significant differences in number of events for each type. Though this provides a data set useful for comparison, it can "hide" damaging outliers. The abundance of one-time event types compounds the problem. Additional analysis for the most impactful single event agreed with the annualized assessment that floods and hurricanes/tornadoes cause the most damage. 
 
 ### Summary Statistics
-Summarize by year
 ```{r sumStats}
-# Summarize data by year and type
 datSumYearType <- dat[, list(sum(FATALITIES), sum(INJURIES), sum(DMGTOT)),
                       by = c("YEAR", "EVTYPECLEAN")]
-setnames(datSumYearType, c("YEAR", "EVTYPE", "FATALITIES", "INJURIES", "DMGTOT"))
+setnames(datSumYearType,
+         c("YEAR", "EVTYPE", "FATALITIES", "INJURIES", "DMGTOT"))
 ```
 
 #### Annual Fatalities
 ```{r sumStatsFtl}
 datStatsFtl <- datSumYearType[, as.list(summary(FATALITIES)), by = EVTYPE]
 datStatsFtl <- datStatsFtl[order(Mean, decreasing = TRUE)]
+print(datStatsFtl[1:5])
 ```
 
 #### Injuries
 ```{r sumStatsInj}
 datStatsInj <- datSumYearType[, as.list(summary(INJURIES)), by = EVTYPE]
 datStatsInj <- datStatsInj[order(Mean, decreasing = TRUE)]
+print(datStatsInj[1:5])
 ```
 
 #### Economic Damage
 ```{r sumStatsDmg}
 datStatsDmg <- datSumYearType[, as.list(summary(DMGTOT)), by = EVTYPE]
 datStatsDmg <- datStatsDmg[order(Mean, decreasing = TRUE)]
+print(datStatsDmg[1:5])
 ```
 
 ### Annual Impact
+Both health and economic impact plotted as log10 for the top five most damaging event types. Logarithmic scale simplified visual comparison.
 
 #### Health
 ```{r healthImpact}
-# Load ggplot2 and reshape packages
-library(ggplot2)
-library(reshape)
-
 datPlot <- datSumYearType[EVTYPE %in% datStatsFtl[1:5]$EVTYPE]
-datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"), measure = c("FATALITIES", "INJURIES"))
+datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"),
+                measure = c("FATALITIES", "INJURIES"))
 
-qplot(factor(EVTYPE), log10(value), data = datPlot, geom = "boxplot", facets = . ~ variable)
+qplot(factor(EVTYPE), log10(value), data = datPlot, geom = "boxplot",
+      facets = variable ~ .)
 rm(datPlot)
 ```
 
 #### Economic
 ```{r econImpact}
 datPlot <- datSumYearType[EVTYPE %in% datStatsDmg[1:5]$EVTYPE]
-datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"), measure = "DMGTOT")
+datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"),
+                measure = "DMGTOT")
 
-qplot(factor(EVTYPE), log10(value), data = datPlot, geom = "boxplot", facets = . ~ variable)
+qplot(factor(EVTYPE), log10(value), data = datPlot, geom = "boxplot",
+      facets = variable ~ .)
 rm(datPlot)
 ```
 
 ### Single Event Economic Impact
+Comparison of the 10 most impactful events in the NOAA storm database plotted for economic loss and deviation from the mean. Individual descriptions vary slightly from the annual analysis above. However, broader categories of flood and hurricane/tornadoes show similar damage patterns when summed or considered individually.
+
 ```{r singleEvent}
-datMaxType <- dat[, list(max(DMGTOT), (max(DMGTOT) - mean(DMGTOT)) / sd(DMGTOT)), "EVTYPECLEAN"]
+datMaxType <- dat[, list(max(DMGTOT), (max(DMGTOT) - mean(DMGTOT)) / sd(DMGTOT)),
+                  "EVTYPECLEAN"]
 setnames(datMaxType, c("EVTYPE", "DMGTOT", "SD"))
 datMaxType <- datMaxType[order(DMGTOT, decreasing = TRUE)]
 
@@ -245,3 +272,4 @@ qplot(DMGTOT, SD, data = datMaxType[1:10], color = EVTYPE)
 ```
 
 ## Conclusion
+Severe U.S. weather accounts for many deaths and economic loss each year. Though any event carries risk, weather causing extreme heat and flood account for the greatest loss of life. Hurricanes and tornadoes do not harm as many citizens. They - along with floods - cause the most economic damage.

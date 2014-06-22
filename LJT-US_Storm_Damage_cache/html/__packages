@@ -1,9 +1,6 @@
 base
 data.table
-datasets
-graphics
-grDevices
-methods
+ggplot2
 plyr
-stats
-utils
+reshape
+reshape2
