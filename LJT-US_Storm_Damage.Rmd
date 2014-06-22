@@ -98,53 +98,71 @@ rm(cols)
     ```
 3. Clean event types (multiple steps)
     ```{r cleanDatEVTYPE, cache = TRUE}
+    # Load plyr package
+    library(plyr)
+
+    # Count event types before clenup
+    print(length(unique(dat$EVTYPE)))
+
     # Create data.frame of unique EVTYPE values
     # Copies columns to enable replacement matching
     evtypes <- summarize(dat, EVTYPE = count(EVTYPE))[[1]]
-    evtypes$clean <- evtypes$x
+    names(evtypes) <- c("EVTYPE", "COUNT")
+    evtypes$CLEAN <- evtypes$EVTYPE
+    
+    # EXPLAIN
+    evtypesPermit <- read.csv("./data/evtypes.csv", stringsAsFactors = FALSE)[[1]]
     
     # Convert to upper case
-    evtypes$clean <- toupper(evtypes$clean)
-    
-    # Remove leading space
-    evtypes$clean <- gsub("^ +", "", evtypes$clean)
-    
-    # Replace 'THUNDERSTORM' with 'TSTM'
-    evtypes$clean <- gsub("THUNDERSTORM", "TSTM", evtypes$clean)
-    
-    # Truncate 'TSTM WIND'
-    evtypes$clean[grepl("^TSTM WIND", evtypes$clean)] <- "TSTM WIND"
-    
-    # Truncate 'HAIL'
-    evtypes$clean[grepl("^HAIL", evtypes$clean)] <- "HAIL"
-    
-    # Truncate 'HEAVY SNOW'
-    evtypes$clean[grepl("^HEAVY SNOW", evtypes$clean)] <- "HEAVY SNOW"
-    
-    # Truncate 'LIGHTNING'
-    evtypes$clean[grepl("^LIGHTNING", evtypes$clean)] <- "LIGHTNING"
-    
-    # Simplify 'FLASH FLOOD' and 'FLOOD'
-    evtypes$clean <- gsub("FLASH FLOOD.*FLOOD", "FLASH FLOOD", evtypes$clean)
-    
-    # Simplify then truncate 'HEAVY RAIN' (includes 'HEAVY PRECIPITATION' and 'HEAVY SHOWERS')
-    evtypes$clean <- gsub("HEAVY (PRECIPITATION|SHOWERS)", "HEAVY RAIN", evtypes$clean)
-    evtypes$clean[grepl("^HEAVY RAIN", evtypes$clean)] <- "HEAVY RAIN"
-    
-    # Simplify then truncate 'HIGH WIND(S)' and 'STRONG WIND(S)'
-    evtypes$clean <- gsub("(HIGH|STRONG) WIND", "HIGH WIND", evtypes$clean)
-    evtypes$clean[grepl("^HIGH WIND", evtypes$clean)] <- "HIGH WIND"
-    
-    # Simplify 'TORNADO'
-    evtypes$clean[grepl("TORNADO", evtypes$clean)] <- "TORNADO"
-    
+    evtypes$CLEAN <- toupper(evtypes$CLEAN)
+    evtypesPermit <- toupper(evtypesPermit)
+
     # Replace non-alphanumeric with . and remove duplicates
-    evtypes$clean <- gsub("[^0-9A-Z]", ".", evtypes$clean)
-    evtypes$clean <- gsub("\\.{2, }", ".", evtypes$clean)
+    evtypes$CLEAN <- gsub("[^0-9A-Z]", ".", evtypes$CLEAN)
+    evtypes$CLEAN <- gsub("\\.{2, }", ".", evtypes$CLEAN)
+    #
+    evtypesPermit <- gsub("[^0-9A-Z]", ".", evtypesPermit)
+    evtypesPermit <- gsub("\\.{2, }", ".", evtypesPermit)
+
+    # Remove leading and ending .
+    evtypes$CLEAN <- gsub("^\\.+", "", evtypes$CLEAN)
+    evtypes$CLEAN <- gsub("\\.+$", "", evtypes$CLEAN)
+    #
+    evtypesPermit <- gsub("^\\.+", "", evtypesPermit)
+    evtypesPermit <- gsub("\\.+$", "", evtypesPermit)
+
+    # Replace 'THUNDERSTORM' with 'TSTM'
+    evtypes$CLEAN <- gsub("THUNDERSTORM", "TSTM", evtypes$CLEAN)
+    evtypesPermit <- gsub("THUNDERSTORM", "TSTM", evtypesPermit)
+    
+    # Simplify 'FLASH FLOOD'
+    evtypes$CLEAN <- gsub("FLASH FLOOD.*FLOOD", "FLASH FLOOD", evtypes$CLEAN)
+    
+    # Simplify 'HEAVY RAIN' (includes 'HEAVY PRECIPITATION' and 'HEAVY SHOWERS')
+    evtypes$CLEAN <- gsub("HEAVY (PRECIPITATION|SHOWERS)", "HEAVY RAIN", evtypes$CLEAN)
+    
+    # Simplify 'HIGH WIND(S)' and 'STRONG WIND(S)'
+    evtypes$CLEAN <- gsub("(HIGH|STRONG) WIND", "HIGH WIND", evtypes$CLEAN)
+
+    # Simplify split 'HURRICANE.TYPHOON' in permitted event types
+    evtypesPermit[grepl("^HURRICANE", evtypesPermit)] <- "HURRICANE"
+    evtypesPermit <- c(evtypesPermit, "TYPHOON")    
+
+    # Order permitted event types by fewest number of characters
+    evtypesPermit <- evtypesPermit[order(nchar(evtypesPermit))]
+    
+    # Search and replace by permitted event types
+    for(ev in evtypesPermit) {
+        evtypes$CLEAN[grepl(ev, evtypes$CLEAN)] <- ev
+    }
+    rm(ev)
 
     # Merge clean event types into data
-    evtypesMerge <- data.table(EVTYPE = evtypes$x, EVTYPECLEAN = evtypes$clean)
+    evtypesMerge <- data.table(EVTYPE = evtypes$EVTYPE, EVTYPECLEAN = evtypes$CLEAN)
     dat <- merge(dat, evtypesMerge, by = "EVTYPE", all.x = TRUE)
+    
+    # Count event types after clenup
+    print(length(unique(dat$EVTYPECLEAN)))
     ```
 4. Multiply property and crop damage by 'EXP' to calculate total
     ```{r cleanDatDamage}
@@ -162,12 +180,12 @@ rm(cols)
     ```
 5. Clear temporary variables
     ```{r cleanDatClear}
-    rm(evtypes, evtypesMerge, expMultiple)
+    rm(evtypes, evtypesPermit, evtypesMerge, expMultiple)
     ```
 ## Results
 
 ### Summary Statistics
-Summarize by year instead of individual events
+Summarize by year
 ```{r sumStats}
 # Summarize data by year and type
 datSumYearType <- dat[, list(sum(FATALITIES), sum(INJURIES), sum(DMGTOT)),
@@ -197,6 +215,10 @@ datStatsDmg <- datStatsDmg[order(Mean, decreasing = TRUE)]
 
 #### Health
 ```{r healthImpact}
+# Load ggplot2 and reshape packages
+library(ggplot2)
+library(reshape)
+
 datPlot <- datSumYearType[EVTYPE %in% datStatsFtl[1:5]$EVTYPE]
 datPlot <- melt(datPlot, id = c("YEAR", "EVTYPE"), measure = c("FATALITIES", "INJURIES"))
 
